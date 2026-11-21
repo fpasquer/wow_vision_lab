@@ -1,0 +1,32 @@
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        HOST_UID: "${HOST_UID:-1000}"
+        HOST_GID: "${HOST_GID:-1000}"
+
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    working_dir: /app
+
+    cpus: 2.0
+    mem_limit: 2g
+
+    network_mode: none
+    read_only: true
+
+    security_opt:
+      - no-new-privileges:true
+
+    cap_drop:
+      - ALL
+
+    tmpfs:
+      - /tmp:size=128m
+
+    volumes:
+      - ./data/input:/app/data/input:ro
+      - ./data/models:/app/data/models:ro
+      - ./data/output:/app/data/output:rw
