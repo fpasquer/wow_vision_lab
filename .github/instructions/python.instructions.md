@@ -6,6 +6,12 @@ applyTo: "**/*.py"
 # Python Guidelines
 
 - Follow PEP 8 and write idiomatic Python.
+- Sort and format imports according to Ruff's `I001` rule.
+- Separate standard-library, third-party, and local imports with blank lines.
+- Within each group, place `import ...` before `from ... import ...` statements
+  and sort each block alphabetically.
+- Check import ordering after adding or changing imports. Use Ruff's Organize
+  Imports action when available, and fix `I001` warnings instead of suppressing them.
 - Use snake_case for functions, methods, variables, modules, and files.
 - Use PascalCase for classes.
 - Use UPPER_SNAKE_CASE for constants.
@@ -19,6 +25,9 @@ applyTo: "**/*.py"
 - Avoid mutable default arguments.
 - Raise specific exceptions with useful error messages.
 - Use context managers for resources that require cleanup.
+- Combine directly nested `with` statements into a single statement with
+  multiple context managers, following Ruff's `SIM117` rule. Preserve context
+  manager order, exception-handling scope, and behavior.
 - Follow existing project conventions.
 - Name pytest test files test_*.py and test functions test_*.
 - Keep tests deterministic and independent.
