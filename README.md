@@ -13,7 +13,7 @@ WoW Vision Lab is a local computer vision learning project focused on detecting 
 
 ## Constraints
 
-- CPU only, with a limit of 2 CPUs and 4 GB RAM.
+- CPU only, with a limit of 2 CPUs and 2 GB RAM.
 - No GPU requirement.
 - No network access during processing.
 - One on-demand processing container.
@@ -25,7 +25,8 @@ The developer owns architecture and requirements. AI tools assist with implement
 
 ## Status
 
-Repository initialization. Application implementation has not started.
+T01, T02, and T03 are complete. T041 adds sequential MP4 reading and a JSON
+summary. Frame export, video processing, and object detection are not implemented.
 
 ## Docker Setup
 
@@ -70,3 +71,99 @@ Use `docker compose run --rm app` for the default Python version check. It exits
 after printing the version, and Compose removes the container. Override the
 command after `app` for other one-shot checks. No continuously running service
 or image-processing functionality is included.
+
+## MP4 Video Reading
+
+Place an MP4 video in `data/input/`. Rebuild the image after changing source
+files, then run the CLI:
+
+```sh
+docker compose build
+docker compose run --rm app python -m main --input data/input/sample.mp4
+```
+
+The default output is `data/output/summary.json`. Set a different output path
+with `--output`:
+
+```sh
+docker compose run --rm app python -m main \
+  --input data/input/sample.mp4 \
+  --output data/output/sample-summary.json
+```
+
+The output directory is created if necessary. A successful summary contains:
+
+```json
+{
+  "video": "sample.mp4",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30.0,
+  "frames_read": 1800,
+  "frames_expected": 1800,
+  "duration_seconds": 60.0,
+  "status": "completed"
+}
+```
+
+`video` is the input filename, without its directory. Frames are decoded
+sequentially and are not collected in memory. `frames_read` counts frames
+actually decoded, not the container's reported frame count. Duration is
+estimated as `frames_read / fps`.
+
+`frames_expected` comes from OpenCV's frame-count metadata. It is used only
+when finite, positive, and integer-valued; otherwise it is `null`. Unknown
+counts do not trigger an incomplete-reading warning.
+
+If reading stops before a valid expected count, a summary is still written:
+
+```json
+{
+  "video": "sample.mp4",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30.0,
+  "frames_read": 850,
+  "frames_expected": 1800,
+  "duration_seconds": 28.333333333333332,
+  "status": "incomplete",
+  "warning": "Video reading stopped before the expected frame count."
+}
+```
+
+The CLI prints the warning to standard error. Successfully writing a summary
+exits with code 0 for both `completed` and `incomplete` results. Completed
+results omit `warning`, including when the expected count is unavailable or
+lower than the decoded count.
+
+Frame-count metadata may be inaccurate. An incomplete result indicates a
+potentially incomplete reading, not proof of corruption. Unknown or
+underreported counts cannot reliably reveal truncation. No automatic recovery
+or frame skipping is attempted.
+
+Missing files, unreadable videos, invalid dimensions or FPS, and videos without
+readable frames produce a clear error on standard error and exit with code 1.
+Zero readable frames remain an error even when the expected count is valid. Invalid
+FPS values (zero, negative, or non-finite) are rejected without a fallback.
+Input errors do not write a summary. Output errors also exit with code 1.
+The video capture is always released, including after errors. The output path
+cannot overwrite the input video.
+
+## Tests
+
+Tests use standard-library `unittest` and a small MP4 generated with OpenCV.
+Mocked captures cover incomplete reading, unavailable or invalid frame counts,
+JSON output, stderr warnings, and resource cleanup.
+No additional dependencies are needed. Mount the tests read-only because they
+are intentionally excluded from the application image:
+
+```sh
+docker compose build
+docker compose run --rm \
+  -v "$(pwd)/tests:/app/tests:ro" \
+  app python -m unittest discover -s tests -v
+```
+
+Test fixtures are created in temporary directories and removed after each test.
+The command keeps the T03 user, network, filesystem, CPU, memory, and security
+restrictions.
