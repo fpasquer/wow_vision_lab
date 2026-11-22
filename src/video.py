@@ -2,7 +2,7 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from math import isfinite
 from pathlib import Path
-from typing import Literal, TypedDict
+from typing import Literal, NotRequired, TypedDict
 
 import cv2
 
@@ -13,8 +13,10 @@ class VideoSummary(TypedDict):
     height: int
     fps: float
     frames_read: int
+    frames_expected: int | None
     duration_seconds: float
-    status: Literal["completed"]
+    status: Literal["completed", "incomplete"]
+    warning: NotRequired[str]
 
 
 @contextmanager
@@ -43,6 +45,16 @@ def read_video(video_path: Path) -> VideoSummary:
         if not isfinite(fps) or fps <= 0:
             raise ValueError(f"Invalid video FPS ({fps}): {video_path}")
 
+        frame_count = capture.get(cv2.CAP_PROP_FRAME_COUNT)
+        frames_expected = (
+            int(frame_count)
+            if frame_count is not None
+            and isfinite(frame_count)
+            and frame_count > 0
+            and frame_count.is_integer()
+            else None
+        )
+
         frames_read = 0
         while True:
             success, frame = capture.read()
@@ -55,12 +67,17 @@ def read_video(video_path: Path) -> VideoSummary:
         if frames_read == 0:
             raise ValueError(f"Video contains no readable frames: {video_path}")
 
-    return {
+    summary: VideoSummary = {
         "video": video_path.name,
         "width": int(width),
         "height": int(height),
         "fps": fps,
         "frames_read": frames_read,
+        "frames_expected": frames_expected,
         "duration_seconds": frames_read / fps,
         "status": "completed",
     }
+    if frames_expected is not None and frames_read < frames_expected:
+        summary["status"] = "incomplete"
+        summary["warning"] = "Video reading stopped before the expected frame count."
+    return summary

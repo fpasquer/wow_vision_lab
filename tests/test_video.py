@@ -28,14 +28,14 @@ def generated_video() -> Generator[Path, None, None]:
         yield video_path
 
 
-def make_capture() -> MagicMock:
+def make_capture(frames_expected: float | None = 1000.0) -> MagicMock:
     capture = MagicMock()
     capture.isOpened.return_value = True
     capture.get.side_effect = {
         cv2.CAP_PROP_FRAME_WIDTH: 64.0,
         cv2.CAP_PROP_FRAME_HEIGHT: 48.0,
         cv2.CAP_PROP_FPS: 12.0,
-        cv2.CAP_PROP_FRAME_COUNT: 1000.0,
+        cv2.CAP_PROP_FRAME_COUNT: frames_expected,
     }.get
     capture.read.side_effect = [(True, object())] * 3 + [(False, None)]
     return capture
@@ -54,6 +54,7 @@ class TestVideoReader(unittest.TestCase):
                 "height": 48,
                 "fps": 12.0,
                 "frames_read": 12,
+                "frames_expected": 12,
                 "duration_seconds": 1.0,
                 "status": "completed",
             },
@@ -93,8 +94,84 @@ class TestVideoReader(unittest.TestCase):
         self.assertEqual(summary["frames_read"], 3)
         self.assertEqual(summary["duration_seconds"], 0.25)
         self.assertEqual(capture.read.call_count, 4)
-        self.assertNotIn(call(cv2.CAP_PROP_FRAME_COUNT), capture.get.call_args_list)
+        self.assertIn(call(cv2.CAP_PROP_FRAME_COUNT), capture.get.call_args_list)
         capture.release.assert_called_once_with()
+
+    def test_premature_end_reports_incomplete_reading(self) -> None:
+        with generated_video() as video_path:
+            capture = make_capture()
+            with patch("video.cv2.VideoCapture", return_value=capture):
+                summary = read_video(video_path)
+
+        self.assertEqual(summary["status"], "incomplete")
+        self.assertEqual(summary["frames_read"], 3)
+        self.assertEqual(summary["frames_expected"], 1000)
+        self.assertEqual(summary["duration_seconds"], 0.25)
+        self.assertEqual(
+            summary["warning"],
+            "Video reading stopped before the expected frame count.",
+        )
+        self.assertEqual(capture.read.call_count, 4)
+        capture.release.assert_called_once_with()
+
+    def test_equal_or_underreported_frame_count_is_completed(self) -> None:
+        with generated_video() as video_path:
+            for frames_expected in (3.0, 2.0):
+                with self.subTest(frames_expected=frames_expected):
+                    capture = make_capture(frames_expected)
+                    with patch("video.cv2.VideoCapture", return_value=capture):
+                        summary = read_video(video_path)
+                    self.assertEqual(summary["status"], "completed")
+                    self.assertEqual(summary["frames_read"], 3)
+                    self.assertEqual(
+                        summary["frames_expected"], int(frames_expected)
+                    )
+                    self.assertNotIn("warning", summary)
+                    self.assertEqual(capture.read.call_count, 4)
+                    capture.release.assert_called_once_with()
+
+    def test_unavailable_frame_count_is_completed(self) -> None:
+        with generated_video() as video_path:
+            capture = make_capture(None)
+            with patch("video.cv2.VideoCapture", return_value=capture):
+                summary = read_video(video_path)
+
+        self.assertIsNone(summary["frames_expected"])
+        self.assertEqual(summary["status"], "completed")
+        self.assertEqual(summary["frames_read"], 3)
+        self.assertNotIn("warning", summary)
+        capture.release.assert_called_once_with()
+
+    def test_invalid_frame_counts_are_unavailable(self) -> None:
+        invalid_counts = (
+            0.0, -1.0, float("nan"), float("inf"), float("-inf"), 3.5, 0.5,
+        )
+        with generated_video() as video_path:
+            for frames_expected in invalid_counts:
+                with self.subTest(frames_expected=frames_expected):
+                    capture = make_capture(frames_expected)
+                    with patch("video.cv2.VideoCapture", return_value=capture):
+                        summary = read_video(video_path)
+                    self.assertIsNone(summary["frames_expected"])
+                    self.assertEqual(summary["status"], "completed")
+                    self.assertEqual(summary["frames_read"], 3)
+                    self.assertNotIn("warning", summary)
+                    self.assertEqual(capture.read.call_count, 4)
+                    capture.release.assert_called_once_with()
+
+    def test_frame_count_exception_releases_capture(self) -> None:
+        with generated_video() as video_path:
+            capture = make_capture()
+            capture.get.side_effect = [
+                64.0, 48.0, 12.0, cv2.error("Frame count unavailable."),
+            ]
+            with (
+                patch("video.cv2.VideoCapture", return_value=capture),
+                self.assertRaises(cv2.error),
+            ):
+                read_video(video_path)
+            capture.read.assert_not_called()
+            capture.release.assert_called_once_with()
 
     def test_unopened_capture_is_released(self) -> None:
         with generated_video() as video_path:

@@ -36,6 +36,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Error: {error}", file=sys.stderr)
         return 1
 
+    warning = summary.get("warning")
+    if warning is not None:
+        print(f"Warning: {warning}", file=sys.stderr)
     print(f"Video summary written to: {arguments.output}")
     return 0
 

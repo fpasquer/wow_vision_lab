@@ -10,7 +10,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 import cv2
-from test_video import generated_video
+from test_video import generated_video, make_capture
 
 from main import main
 
@@ -19,13 +19,15 @@ class TestMain(unittest.TestCase):
     def test_writes_summary_to_configured_path(self) -> None:
         with generated_video() as video_path:
             output_path = video_path.parent / "results" / "summary.json"
-            with redirect_stdout(StringIO()):
+            errors = StringIO()
+            with redirect_stderr(errors), redirect_stdout(StringIO()):
                 exit_code = main(
                     ["--input", str(video_path), "--output", str(output_path)]
                 )
             summary = json.loads(output_path.read_text(encoding="utf-8"))
 
         self.assertEqual(exit_code, 0)
+        self.assertEqual(errors.getvalue(), "")
         self.assertEqual(
             summary,
             {
@@ -34,6 +36,7 @@ class TestMain(unittest.TestCase):
                 "height": 48,
                 "fps": 12.0,
                 "frames_read": 12,
+                "frames_expected": 12,
                 "duration_seconds": 1.0,
                 "status": "completed",
             },
@@ -56,7 +59,75 @@ class TestMain(unittest.TestCase):
             output_path = video_path.parent / "data" / "output" / "summary.json"
             summary = json.loads(output_path.read_text(encoding="utf-8"))
             self.assertEqual(summary["frames_read"], 12)
+            self.assertEqual(summary["frames_expected"], 12)
             self.assertEqual(summary["status"], "completed")
+            self.assertNotIn("warning", summary)
+            self.assertNotIn("Warning:", result.stderr)
+
+    def test_incomplete_reading_writes_summary_and_warns(self) -> None:
+        with generated_video() as video_path:
+            output_path = video_path.parent / "results" / "summary.json"
+            capture = make_capture()
+            errors = StringIO()
+            with (
+                patch("video.cv2.VideoCapture", return_value=capture),
+                redirect_stderr(errors),
+                redirect_stdout(StringIO()),
+            ):
+                exit_code = main(
+                    ["--input", str(video_path), "--output", str(output_path)]
+                )
+            summary = json.loads(output_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(
+            summary,
+            {
+                "video": "sample.mp4",
+                "width": 64,
+                "height": 48,
+                "fps": 12.0,
+                "frames_read": 3,
+                "frames_expected": 1000,
+                "duration_seconds": 0.25,
+                "status": "incomplete",
+                "warning": "Video reading stopped before the expected frame count.",
+            },
+        )
+        self.assertEqual(
+            errors.getvalue(),
+            "Warning: Video reading stopped before the expected frame count.\n",
+        )
+        capture.release.assert_called_once_with()
+
+    def test_unavailable_frame_counts_write_null_without_warning(self) -> None:
+        frame_counts = (
+            None, 0.0, -1.0, float("nan"), float("inf"), float("-inf"), 3.5,
+        )
+        with generated_video() as video_path:
+            for frames_expected in frame_counts:
+                with self.subTest(frames_expected=frames_expected):
+                    output_path = video_path.parent / "summary.json"
+                    capture = make_capture(frames_expected)
+                    errors = StringIO()
+                    with (
+                        patch("video.cv2.VideoCapture", return_value=capture),
+                        redirect_stderr(errors),
+                        redirect_stdout(StringIO()),
+                    ):
+                        exit_code = main(
+                            [
+                                "--input", str(video_path),
+                                "--output", str(output_path),
+                            ]
+                        )
+                    summary = json.loads(output_path.read_text(encoding="utf-8"))
+                    self.assertEqual(exit_code, 0)
+                    self.assertIsNone(summary["frames_expected"])
+                    self.assertEqual(summary["status"], "completed")
+                    self.assertNotIn("warning", summary)
+                    self.assertEqual(errors.getvalue(), "")
+                    capture.release.assert_called_once_with()
 
     def test_missing_and_invalid_inputs_report_errors(self) -> None:
         with TemporaryDirectory() as directory:
@@ -113,6 +184,30 @@ class TestMain(unittest.TestCase):
             self.assertEqual(exit_code, 1)
             self.assertIn("Error:", errors.getvalue())
             self.assertIn(str(blocked_path), errors.getvalue())
+
+    def test_output_failure_for_incomplete_reading_is_reported(self) -> None:
+        with generated_video() as video_path:
+            blocked_path = video_path.parent / "blocked"
+            blocked_path.write_text("Not a directory.", encoding="utf-8")
+            capture = make_capture()
+            errors = StringIO()
+            output = StringIO()
+            with (
+                patch("video.cv2.VideoCapture", return_value=capture),
+                redirect_stderr(errors),
+                redirect_stdout(output),
+            ):
+                exit_code = main(
+                    [
+                        "--input", str(video_path),
+                        "--output", str(blocked_path / "summary.json"),
+                    ]
+                )
+            self.assertEqual(exit_code, 1)
+            self.assertIn("Error:", errors.getvalue())
+            self.assertIn(str(blocked_path), errors.getvalue())
+            self.assertEqual(output.getvalue(), "")
+            capture.release.assert_called_once_with()
 
     def test_output_cannot_overwrite_input(self) -> None:
         with generated_video() as video_path:
