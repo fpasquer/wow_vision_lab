@@ -347,7 +347,9 @@ class TestDetectionMain(unittest.TestCase):
         self.assertEqual(len(metadata["frames"]), 3)
         self.assertTrue(all(frame["detections"] == [] for frame in metadata["frames"]))
 
-    def test_incomplete_read_keeps_summary_warning_and_discards_detection_outputs(self) -> None:
+    def test_incomplete_read_writes_summary_and_preserves_previous_sidecars(self) -> None:
+        self.detection_path.write_bytes(b"Previous detections.")
+        self.video_path.write_bytes(b"Previous video.")
         capture = make_capture()
         capture.read.side_effect = [
             (True, np.zeros((48, 64, 3), dtype=np.uint8)) for _ in range(3)
@@ -366,7 +368,9 @@ class TestDetectionMain(unittest.TestCase):
         self.assertEqual(summary["frames_read"], 3)
         self.assertEqual(summary["frames_expected"], 1000)
         self.assertEqual(summary["duration_seconds"], 0.25)
-        self._assert_no_detection_outputs()
+        self.assertEqual(self.detection_path.read_bytes(), b"Previous detections.")
+        self.assertEqual(self.video_path.read_bytes(), b"Previous video.")
+        self.assertEqual(list(Path(self.directory.name).glob(".detection-*")), [])
         capture.release.assert_called_once_with()
 
     def test_unknown_frame_count_keeps_existing_completed_behavior(self) -> None:
@@ -398,15 +402,37 @@ class TestDetectionMain(unittest.TestCase):
         self.assertFalse(self.output_path.exists())
         self._assert_no_detection_outputs()
 
-    def test_summary_failure_does_not_publish_detection_outputs(self) -> None:
-        with (
-            generated_video() as input_path,
-            patch("main.write_summary", side_effect=OSError("Summary write failed.")),
-        ):
-            exit_code, errors = self._run(input_path)
-        self.assertEqual(exit_code, 1)
-        self.assertIn("Summary write failed.", errors)
-        self._assert_no_detection_outputs()
+    def test_preparation_failure_preserves_previous_outputs(self) -> None:
+        paths = (self.output_path, self.detection_path, self.video_path)
+        previous = {path: f"Previous {path.name}.".encode() for path in paths}
+        write_text = Path.write_text
+
+        def fail_write(path: Path, text: str, *, encoding: str) -> int:
+            write_text(path, text[:10], encoding=encoding)
+            raise OSError("Summary write failed.")
+
+        failures = (
+            (
+                "Summary write failed.",
+                patch.object(Path, "write_text", autospec=True, side_effect=fail_write),
+            ),
+            (
+                "Backup failed.",
+                patch("output.detection.copy2", side_effect=OSError("Backup failed.")),
+            ),
+        )
+        with generated_video() as input_path:
+            for message, failure in failures:
+                with self.subTest(error=message), failure:
+                    for path, content in previous.items():
+                        path.write_bytes(content)
+                    exit_code, errors = self._run(input_path)
+                    self.assertEqual(exit_code, 1)
+                    self.assertIn(message, errors)
+                    self.assertEqual({path: path.read_bytes() for path in paths}, previous)
+                    self.assertEqual(
+                        list(Path(self.directory.name).glob(".detection-*")), []
+                    )
 
     def test_video_writer_failure_is_clear_and_releases_writer(self) -> None:
         with (
@@ -420,32 +446,39 @@ class TestDetectionMain(unittest.TestCase):
         create_writer.return_value.release.assert_called()
         self._assert_no_detection_outputs()
 
-    def test_json_publish_failure_restores_previous_video(self) -> None:
-        self.video_path.write_bytes(b"Previous video.")
-        self.detection_path.write_text("Previous detections.", encoding="utf-8")
+    def test_failed_replacement_leaves_outputs_unchanged(self) -> None:
+        paths = (self.video_path, self.detection_path, self.output_path)
+        previous = {path: f"Previous {path.name}.".encode() for path in paths}
         replace = Path.replace
 
-        def fail_detection_publish(source: Path, target: Path) -> Path:
-            if source.name == "detections.json":
-                raise OSError("Detection publish failed.")
+        def fail_publish(source: Path, target: Path) -> Path:
+            if target.name == failed_path.name:
+                raise OSError(f"Cannot publish {failed_path.name}.")
             return replace(source, target)
 
-        with (
-            generated_video() as input_path,
-            patch(
-                "output.detection.Path.replace",
-                autospec=True,
-                side_effect=fail_detection_publish,
-            ),
-        ):
-            exit_code, errors = self._run(input_path)
-        self.assertEqual(exit_code, 1)
-        self.assertIn("Detection publish failed.", errors)
-        self.assertEqual(self.video_path.read_bytes(), b"Previous video.")
-        self.assertEqual(
-            self.detection_path.read_text(encoding="utf-8"), "Previous detections."
-        )
-        self.assertEqual(list(Path(self.directory.name).glob(".detection-*")), [])
+        with generated_video() as input_path:
+            for existing in ((), paths[:1], paths):
+                for failed_path in paths:
+                    with self.subTest(existing=len(existing), file=failed_path.name):
+                        expected = {path: previous[path] for path in existing}
+                        for path in paths:
+                            if path in expected:
+                                path.write_bytes(expected[path])
+                            else:
+                                path.unlink(missing_ok=True)
+                        with patch.object(
+                            Path, "replace", autospec=True, side_effect=fail_publish
+                        ):
+                            exit_code, errors = self._run(input_path)
+                        self.assertEqual(exit_code, 1)
+                        self.assertIn(f"Cannot publish {failed_path.name}.", errors)
+                        actual = {
+                            path: path.read_bytes() for path in paths if path.exists()
+                        }
+                        self.assertEqual(actual, expected)
+                        self.assertEqual(
+                            list(Path(self.directory.name).glob(".detection-*")), []
+                        )
 
     def test_missing_and_invalid_model_errors_are_reported(self) -> None:
         for error in (

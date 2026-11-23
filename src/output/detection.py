@@ -1,6 +1,7 @@
 import json
 from collections.abc import Sequence
 from pathlib import Path
+from shutil import copy2
 from tempfile import TemporaryDirectory
 from types import TracebackType
 from typing import Self, TextIO
@@ -9,8 +10,10 @@ import cv2
 from cv2.typing import MatLike
 
 from detector import Detection
+from video import VideoSummary
 
 from .annotation import _annotate_frame
+from .summary import write_summary
 
 
 class DetectionOutput:
@@ -32,6 +35,7 @@ class DetectionOutput:
             raise ValueError("Output paths must not overwrite the input or model.")
         if any(path.exists() and not path.is_file() for path in paths):
             raise ValueError("Detection output paths must be files, not directories.")
+        self._summary_target = resolved[0]
         self.model_name = model_path.name
         self._directory: TemporaryDirectory[str] | None = None
         self._json: TextIO | None = None
@@ -86,22 +90,45 @@ class DetectionOutput:
             _annotate_frame(frame, detections)
         self._video.write(frame)
 
-    def finalize(self) -> None:
+    def finalize(self, summary: VideoSummary) -> None:
         if self._directory is None or self._json is None or self._video is None:
             raise RuntimeError("Detection outputs contain no processed frames.")
-        self._json.write("\n]}\n")
+        completed = summary["status"] == "completed"
+        if completed:
+            self._json.write("\n]}\n")
         self._close()
         directory = Path(self._directory.name)
-        previous_video = directory / "previous.mp4"
-        if self.video_path.is_file():
-            self.video_path.replace(previous_video)
+        staged_summary = directory / "summary.json"
+        write_summary(summary, staged_summary)
+        if not completed:
+            staged_summary.replace(self._summary_target)
+            return
+
+        sidecars = (
+            (directory / "annotated.mp4", self.video_path),
+            (directory / "detections.json", self.detection_path),
+        )
+        backups: dict[Path, Path] = {}
+        for staged, target in sidecars:
+            if target.is_symlink() or target.exists():
+                backup = directory / f"previous-{staged.name}"
+                copy2(target, backup, follow_symlinks=False)
+                backups[target] = backup
+
+        published: list[Path] = []
         try:
-            (directory / "annotated.mp4").replace(self.video_path)
-            (directory / "detections.json").replace(self.detection_path)
+            for staged, target in sidecars:
+                staged.replace(target)
+                published.append(target)
+            # Keep the old summary in place until both sidecars are published.
+            staged_summary.replace(self._summary_target)
         except OSError:
-            self.video_path.unlink(missing_ok=True)
-            if previous_video.exists():
-                previous_video.replace(self.video_path)
+            for target in reversed(published):
+                backup = backups.get(target)
+                if backup is None:
+                    target.unlink(missing_ok=True)
+                else:
+                    backup.replace(target)
             raise
 
     def _close(self) -> None:

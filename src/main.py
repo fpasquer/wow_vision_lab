@@ -73,9 +73,7 @@ def _detect_video(arguments: argparse.Namespace) -> VideoSummary:
 
     with outputs:
         summary = read_video(arguments.input, process_frame)
-        write_summary(summary, arguments.output)
-        if summary["status"] == "completed":
-            outputs.finalize()
+        outputs.finalize(summary)
     return summary
 
 

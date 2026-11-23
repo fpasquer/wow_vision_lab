@@ -251,9 +251,12 @@ the actual timestamps in a variable-frame-rate video. Bounding boxes are
 `[x1, y1, x2, y2]` in original-frame pixels, from top-left to bottom-right.
 
 Frames and detection records are processed sequentially without collecting
-the entire video in memory. Detection JSON and MP4 are staged under
-`data/output` and published only after completed processing and a successful
-summary write. Failures remove unfinished detection files and exit with code 1.
+the entire video in memory. For a completed detection run, all three files are
+prepared in a temporary directory under `data/output`. The app replaces the
+annotated MP4 and detection JSON first, then the summary. If a replacement
+fails, the app restores any sidecars it already replaced or removes them if
+they did not exist before. The previous summary stays in place, and the app
+exits with code 1.
 Missing, unreadable, corrupt, or non-detection model files produce clear errors
 without downloading or falling back to another model.
 
