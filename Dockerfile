@@ -3,7 +3,15 @@ FROM python:3.15.2-slim-trixie
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app/src
+    PYTHONPATH=/app/src \
+    YOLO_OFFLINE=true \
+    YOLO_AUTOINSTALL=false \
+    YOLO_CONFIG_DIR=/app/data/output/.cache \
+    MPLCONFIGDIR=/app/data/output/.cache/matplotlib \
+    XDG_CACHE_HOME=/app/data/output/.cache \
+    OMP_NUM_THREADS=2 \
+    MKL_NUM_THREADS=2 \
+    OPENBLAS_NUM_THREADS=2
 
 WORKDIR /app
 

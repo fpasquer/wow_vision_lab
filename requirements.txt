@@ -1,2 +1,7 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+
 numpy==2.5.5
 opencv-python-headless==5.1.0.95
+torch==2.14.1+cpu
+torchvision==0.29.1+cpu
+ultralytics-opencv-headless==8.3.253
