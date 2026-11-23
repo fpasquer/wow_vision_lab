@@ -168,8 +168,6 @@ application nor the container downloads weights at runtime. The existing
 Use only trusted `.pt` files because PyTorch checkpoints can contain executable
 Python objects.
 
-This is the source of not trained [models].(https://github.com/yt7589/yolov11)
-
 Rebuild after changing source files, then enable detection with `--model`:
 
 ```sh

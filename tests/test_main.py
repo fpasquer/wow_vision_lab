@@ -411,7 +411,7 @@ class TestDetectionMain(unittest.TestCase):
     def test_video_writer_failure_is_clear_and_releases_writer(self) -> None:
         with (
             generated_video() as input_path,
-            patch("output.cv2.VideoWriter") as create_writer,
+            patch("output.detection.cv2.VideoWriter") as create_writer,
         ):
             create_writer.return_value.isOpened.return_value = False
             exit_code, errors = self._run(input_path)
@@ -432,7 +432,11 @@ class TestDetectionMain(unittest.TestCase):
 
         with (
             generated_video() as input_path,
-            patch("output.Path.replace", autospec=True, side_effect=fail_detection_publish),
+            patch(
+                "output.detection.Path.replace",
+                autospec=True,
+                side_effect=fail_detection_publish,
+            ),
         ):
             exit_code, errors = self._run(input_path)
         self.assertEqual(exit_code, 1)
