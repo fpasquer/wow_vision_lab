@@ -240,6 +240,32 @@ class TestVideoReader(unittest.TestCase):
                 read_video(video_path)
             capture.release.assert_called_once_with()
 
+    def test_frame_handler_receives_sequential_indexes_and_timestamps(self) -> None:
+        handler = MagicMock()
+        with generated_video() as video_path:
+            summary = read_video(video_path, handler)
+        self.assertEqual(summary["frames_read"], 12)
+        self.assertEqual(handler.call_count, 12)
+        for index, arguments in enumerate(handler.call_args_list):
+            frame, frame_index, timestamp, fps = arguments.args
+            self.assertEqual(frame.shape, (48, 64, 3))
+            self.assertEqual(frame_index, index)
+            self.assertEqual(timestamp, index / 12.0)
+            self.assertEqual(fps, 12.0)
+
+    def test_frame_handler_failure_releases_capture(self) -> None:
+        capture = make_capture()
+        handler = MagicMock(side_effect=RuntimeError("Frame processing failed."))
+        with (
+            generated_video() as video_path,
+            patch("video.cv2.VideoCapture", return_value=capture),
+            self.assertRaisesRegex(RuntimeError, "Frame processing failed"),
+        ):
+            read_video(video_path, handler)
+        handler.assert_called_once()
+        capture.read.assert_called_once_with()
+        capture.release.assert_called_once_with()
+
     def test_decoder_exception_releases_capture(self) -> None:
         with generated_video() as video_path:
             capture = make_capture()

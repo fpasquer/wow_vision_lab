@@ -26,6 +26,18 @@
 - Document important architectural decisions only after approval.
 - Do not claim that tests passed unless they were executed.
 
+## Commands
+
+- Run all project commands, including tests and application commands, through Docker Compose; do not run them directly on the host.
+- Use `docker compose run --rm app <command>`. Mount files or directories into the container when needed.
+- For example, run the unit tests with:
+
+  ```sh
+  docker compose run --rm \
+    -v "$(pwd)/tests:/app/tests:ro" \
+    app python -m unittest discover -s tests -v
+  ```
+
 ## Language
 
 - All code, comments, documentation, README files, commit messages, and repository instructions must use clear, simple English.
