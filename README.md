@@ -251,18 +251,17 @@ the actual timestamps in a variable-frame-rate video. Bounding boxes are
 `[x1, y1, x2, y2]` in original-frame pixels, from top-left to bottom-right.
 
 Frames and detection records are processed sequentially without collecting
-the entire video in memory. For a completed detection run, all three files are
-prepared in a temporary directory under `data/output`. The app replaces the
-annotated MP4 and detection JSON first, then the summary. If a replacement
-fails, the app restores any sidecars it already replaced or removes them if
-they did not exist before. The previous summary stays in place, and the app
-exits with code 1.
+the entire video in memory. Before preparing new detection outputs, the app
+deletes any existing summary JSON, detection JSON, and annotated MP4 at the
+requested paths. New outputs are prepared in a temporary directory under
+`data/output`. For a completed run, the app publishes the annotated MP4 and
+detection JSON first, then the summary. If publishing fails, any files already
+published remain in place and the app exits with code 1.
 Missing, unreadable, corrupt, or non-detection model files produce clear errors
 without downloading or falling back to another model.
 
-Incomplete reading retains the existing T04 summary, stderr warning, and exit
-code 0, but does not publish new detection JSON or MP4 files. Any detection
-files from earlier runs remain unchanged.
+Incomplete reading still writes the T04 summary, prints a warning to stderr,
+and exits with code 0, but does not publish detection JSON or MP4 files.
 
 Ultralytics online checks and automatic dependency installation are disabled.
 Library settings and caches are stored under `data/output/.cache`. Inference

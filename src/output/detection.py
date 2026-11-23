@@ -1,7 +1,6 @@
 import json
 from collections.abc import Sequence
 from pathlib import Path
-from shutil import copy2
 from tempfile import TemporaryDirectory
 from types import TracebackType
 from typing import Self, TextIO
@@ -44,6 +43,8 @@ class DetectionOutput:
 
     def __enter__(self) -> Self:
         self.summary_path.parent.mkdir(parents=True, exist_ok=True)
+        for path in (self._summary_target, self.detection_path, self.video_path):
+            path.unlink(missing_ok=True)
         self._directory = TemporaryDirectory(
             prefix=".detection-", dir=self.summary_path.parent
         )
@@ -100,36 +101,10 @@ class DetectionOutput:
         directory = Path(self._directory.name)
         staged_summary = directory / "summary.json"
         write_summary(summary, staged_summary)
-        if not completed:
-            staged_summary.replace(self._summary_target)
-            return
-
-        sidecars = (
-            (directory / "annotated.mp4", self.video_path),
-            (directory / "detections.json", self.detection_path),
-        )
-        backups: dict[Path, Path] = {}
-        for staged, target in sidecars:
-            if target.is_symlink() or target.exists():
-                backup = directory / f"previous-{staged.name}"
-                copy2(target, backup, follow_symlinks=False)
-                backups[target] = backup
-
-        published: list[Path] = []
-        try:
-            for staged, target in sidecars:
-                staged.replace(target)
-                published.append(target)
-            # Keep the old summary in place until both sidecars are published.
-            staged_summary.replace(self._summary_target)
-        except OSError:
-            for target in reversed(published):
-                backup = backups.get(target)
-                if backup is None:
-                    target.unlink(missing_ok=True)
-                else:
-                    backup.replace(target)
-            raise
+        if completed:
+            (directory / "annotated.mp4").replace(self.video_path)
+            (directory / "detections.json").replace(self.detection_path)
+        staged_summary.replace(self._summary_target)
 
     def _close(self) -> None:
         json_file, self._json = self._json, None
